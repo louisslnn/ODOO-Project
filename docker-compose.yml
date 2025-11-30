@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  finance-agent:
+    build: .
+    container_name: finance-employee-agent
+    environment:
+      - ERP_TYPE=${ERP_TYPE:-odoo}
+      - ERP_URL=${ERP_URL}
+      - ERP_DATABASE=${ERP_DATABASE}
+      - ERP_USERNAME=${ERP_USERNAME}
+      - ERP_PASSWORD=${ERP_PASSWORD}
+      - APP_MODE=${APP_MODE:-assistant}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHECK_INTERVAL_HOURS=${CHECK_INTERVAL_HOURS:-24}
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config
+    restart: unless-stopped
+    networks:
+      - finance-network
+
+networks:
+  finance-network:
+    driver: bridge
+
