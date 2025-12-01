@@ -76,4 +76,3 @@ class Config:
         if cls._config is None:
             return cls.load()
         return cls._config
-

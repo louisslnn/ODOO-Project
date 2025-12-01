@@ -13,35 +13,39 @@ The Agent operates in two modes:
 
 This is an **external microservice** - a standalone Python application that connects to the ERP via API, NOT an internal ERP module. This design ensures:
 
-- ERP-agnostic architecture (Adapter pattern)
-- Independent deployment and scaling
-- No ERP system modifications required
+- **ERP-agnostic architecture:** Uses an Adapter pattern to switch between ERPs easily.
+- **Independent deployment:** Can run on a separate server, Docker container, or local machine.
+- **No ERP system modifications:** Zero code changes required inside Odoo.
 
 ## 🤖 The 4 Internal Roles (Bots)
 
 ### 1. PostingBot (The Accountant)
 Converts documents (invoices, receipts) into accounting entries.
+*(Status: Planned)*
 
 ### 2. MatchingBot (The Reconciler)
 Links payments to invoices and performs bank reconciliations.
+*(Status: Planned)*
 
-### 3. ControlBot (The Controller) - **MVP Priority**
-Detects anomalies, compliance issues, and risk. Currently implemented with checks for:
-- Zero amount entries
-- Unbalanced journals
-- Garbage/deprecated account usage
-- Invoice-receipt mismatches
-- (Placeholder for inventory and VAT checks)
+### 3. ControlBot (The Controller) - ✅ MVP Live
+Detects anomalies, compliance issues, and risks. Currently operational with the following checks:
+- **Zero Cost Items:** Detects products configured with a cost of 0.00 (margin risk).
+- **Zero Amount Entries:** Flags journal entries with 0.00 value.
+- **Unbalanced Journals:** Ensures debits equal credits.
+- **Garbage Account Usage:** Alerts if deprecated accounts are used.
+- **Invoice/Receipt Mismatch:** Checks for consistency between invoice totals and residuals.
 
 ### 4. ReportBot (The Analyst)
-Generates KPIs and explains the "Why" behind the numbers.
+Generates KPIs and explains the "Why" behind the numbers using Natural Language.
+*(Status: Next Phase - Interactivity Focus)*
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- Access to an Odoo instance (or configure for your ERP)
+- Access to an Odoo instance (v14-v17 tested)
+- Modules installed on Odoo: `Invoicing`, `Sales`, `Inventory`
 
 ### Installation
 
@@ -51,26 +55,24 @@ Generates KPIs and explains the "Why" behind the numbers.
    ```
 
 2. **Create a virtual environment**
-   ```bash
-   python -m venv venv
+   ```python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+   ```pip install -r requirements.txt```
 
 4. **Configure environment variables**
-   
-   Create a `.env` file in the project root:
-   ```env
+
+Create a ```.env``` file in the project root:
+   ```# ERP Configuration
    ERP_TYPE=odoo
    ERP_URL=http://localhost:8069
-   ERP_DATABASE=your_database_name
-   ERP_USERNAME=your_username
-   ERP_PASSWORD=your_password
-   
+   ERP_DATABASE=dev_db
+   ERP_USERNAME=admin
+   ERP_PASSWORD=admin
+
+   # App Configuration
    APP_MODE=assistant
    LOG_LEVEL=INFO
    LOG_FILE=logs/finance_agent.log
@@ -78,157 +80,87 @@ Generates KPIs and explains the "Why" behind the numbers.
    ```
 
 5. **Run the agent**
-   ```bash
-   python -m src.main
-   ```
-
-## 🐳 Docker Deployment
-
-### Using Docker Compose
-
-1. **Create `.env` file** (see above)
-
-2. **Build and run**
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **View logs**
-   ```bash
-   docker-compose logs -f finance-agent
-   ```
-
-### Using Docker directly
-
-```bash
-docker build -t finance-employee-agent .
-docker run --env-file .env finance-employee-agent
-```
-
-## 📁 Project Structure
-
-```
-ODOO-Project/
-├── src/
-│   ├── core/               # Core ERP adapters and configuration
-│   │   ├── __init__.py
-│   │   ├── erp_client.py   # Abstract ERPClient interface
-│   │   ├── odoo_client.py  # Odoo implementation
-│   │   └── config.py       # Configuration management
-│   ├── bots/
-│   │   ├── posting/        # PostingBot (future)
-│   │   ├── matching/       # MatchingBot (future)
-│   │   ├── control/        # ControlBot (MVP)
-│   │   │   └── control_bot.py
-│   │   └── reporting/      # ReportBot (future)
-│   ├── main.py             # Main entry point
-│   └── __init__.py
-├── config/                 # Configuration files
-├── logs/                   # Log files and todo lists
-├── tests/                  # Test files
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
-```
-
-## 🔧 Configuration
-
-The application uses environment variables for configuration. See `.env.example` for all available options.
-
-Key configuration options:
-- `ERP_TYPE`: ERP system type (currently: `odoo`)
-- `ERP_URL`: Base URL of your ERP instance
-- `ERP_DATABASE`: Database name
-- `ERP_USERNAME`: Username for authentication
-- `ERP_PASSWORD`: Password for authentication
-- `APP_MODE`: `assistant` or `auto`
-- `LOG_LEVEL`: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
+```python -m src.main```
 
 ## 📊 ControlBot Output
 
-ControlBot generates a "Finance To-Do List" that includes:
+The ControlBot generates a high-visibility **"Finance To-Do List"**:
 
-- **Errors**: Critical issues that must be fixed immediately
-- **Warnings**: Items that should be reviewed
-- **Info**: Informational messages
+1. **Console Output:** Immediate feedback for developers.
+2. **Audit Logs:** Saves a timestamped report in `logs/todo_list_YYYYMMDD_HHMMSS.txt`.
 
-The todo list is displayed in the console and saved to `logs/todo_list_YYYYMMDD_HHMMSS.txt`.
+**Severity Levels:**
+- 🔴 **ERROR**: Critical issues (e.g., Unbalanced journals).
+- 🟡 **WARNING**: Business risks (e.g., Selling items at 0 cost).
+- ℹ️ **INFO**: General notifications.
 
 ## 🔌 ERP Integration
 
 ### Current Implementation: Odoo
 
-The `OdooClient` uses XML-RPC to communicate with Odoo. It implements the abstract `ERPClient` interface, providing methods for:
+The project features a robust `OdooClient` based on `xmlrpc` that handles:
+- Authentication & Connection management.
+- Dynamic data fetching (`search_read`).
+- Transaction creation (`create`, `post`).
 
-- Fetching accounting entries and lines
-- Creating and validating journal entries
-- Retrieving invoices, payments, and bank statements
-- Accessing chart of accounts and journals
+### Architecture for Growth
 
-### Future Integrations
-
-The adapter pattern allows easy addition of new ERP clients:
-
-1. Create a new class inheriting from `ERPClient`
-2. Implement all abstract methods
-3. Configure via `ERP_TYPE` environment variable
-
-Planned integrations:
-- NetSuite
-- SAP
-- Microsoft Dynamics
-
-## 🧪 Testing
-
-```bash
-# Install test dependencies
-pip install pytest pytest-cov
-
-# Run tests
-pytest
-
-# With coverage
-pytest --cov=src tests/
-```
+The project uses a structured approach:
+- `src/core/config.py`: **Pydantic** based configuration management (Type safety).
+- `src/core/erp_client.py`: Abstract Base Class ensuring all ERP integrations follow the same contract.
+- `src/main.py`: Central entry point with **Loguru** logging.
 
 ## 📝 Development Roadmap
 
-### Phase 1: Setup & ControlBot MVP ✅
-- [x] Project scaffolding
-- [x] ERP adapter interface
-- [x] Odoo client implementation
-- [x] ControlBot basic checks
+### Phase 1: Setup & ControlBot MVP (Completed) ✅
+- [x] Project scaffolding & Directory structure.
+- [x] Environment setup (Docker, Pydantic, Loguru).
+- [x] ERP Adapter Interface & Odoo Client implementation.
+- [x] Connection established with Odoo Local.
+- [x] **ControlBot Implementation**:
+    - [x] Logic for detecting anomalies.
+    - [x] Validated against test data (Zero cost products, Draft invoices).
+    - [x] Report generation (Console + File).
 
-### Phase 2: Enhanced ControlBot
-- [ ] Complete inventory checks
-- [ ] Full VAT validation
-- [ ] Advanced consistency checks
+### Phase 2: ReportBot & Interactivity (Next Step) 🚧
+- [ ] **Interactive Mode:** Allow the user to query the bot (e.g., "Give me the P&L for Q1").
+- [ ] **Data Aggregation:** Build helpers to fetch Sales/Margin data.
+- [ ] **Natural Language Output:** Simple variance explanation.
 
-### Phase 3: MatchingBot
-- [ ] Payment-invoice matching
-- [ ] Bank reconciliation
-- [ ] PSP payment matching
+### Phase 3: Actionable Insights
+- [ ] **Write-Back:** Convert ControlBot issues into Odoo "Activities" (To-Do tasks inside the ERP).
+- [ ] **MatchingBot:** Implement automatic bank reconciliation logic.
 
-### Phase 4: PostingBot
-- [ ] Document extraction
-- [ ] Entry proposal logic
-- [ ] Human validation workflow
+### Phase 4: PostingBot & Automation
+- [ ] Document OCR simulation.
+- [ ] Draft entry creation.
 
-### Phase 5: ReportBot
-- [ ] KPI generation
-- [ ] Variance analysis
-- [ ] Natural language explanations
+## 📁 Project Structure
 
-## 📄 License
+```text
+ODOO-Project/
+├── src/
+│   ├── core/               # Core infrastructure
+│   │   ├── config.py       # Pydantic settings
+│   │   ├── erp_client.py   # Abstract Interface
+│   │   └── odoo_client.py  # Odoo Implementation
+│   ├── bots/
+│   │   ├── control/        # ControlBot (MVP Live)
+│   │   │   └── control_bot.py
+│   │   ├── matching/       # MatchingBot (Planned)
+│   │   ├── posting/        # PostingBot (Planned)
+│   │   └── reporting/      # ReportBot (Next Step)
+│   ├── main.py             # Application Entry Point
+│   └── __init__.py
+├── logs/                   # Audit trails
+├── .env                    # Secrets (Gitignored)
+├── requirements.txt
+└── README.md
 
-[Add your license here]
+## Contributing
 
-## 🤝 Contributing
+This project is currently in the Alpha / Research phase.
 
-[Add contributing guidelines here]
+## 📧 Contact
 
-## 📧 Support
-
-[Add support contact information here]
-
+Project Lead: Nelson, Lead Developer: Louis

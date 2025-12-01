@@ -236,13 +236,38 @@ class ControlBot:
             logger.error(f"Error in negative stock check: {e}")
 
     def check_zero_cost_items(self) -> None:
-        """Flag items with Cost = 0."""
+        """Flag items with Cost = 0 (Danger for margins!)."""
         logger.info("Running check: Zero cost items")
 
         try:
-            # This is a placeholder - actual implementation depends on ERP's product/cost model
-            logger.warning("Zero cost items check not yet implemented - requires product/cost model access")
+            domain = [
+                ('detailed_type', '=', 'product'), 
+                ('standard_price', '=', 0.0),
+                ('active', '=', True)
+            ]
             
+            products = self.erp_client._execute_kw(
+                'product.product', 
+                'search_read', 
+                [domain], 
+                {'fields': ['name', 'default_code', 'detailed_type'], 'limit': 100}
+            )
+
+            for product in products:
+                issue = ControlIssue(
+                    check_name="zero_cost_item",
+                    severity=IssueSeverity.WARNING,
+                    message=f"The product '{product['name']}' has a cost of 0.00 (Danger for margins!)",
+                    entity_type="product.product",
+                    entity_id=product['id'],
+                    entity_name=product['name'],
+                    details={
+                        "code": product.get('default_code'),
+                        "type": product.get('detailed_type')
+                    },
+                )
+                self.issues.append(issue)
+
         except Exception as e:
             logger.error(f"Error in zero cost check: {e}")
 
