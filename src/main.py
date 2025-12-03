@@ -1,99 +1,88 @@
 """Main entry point for the Finance Employee AI Agent."""
 
 import sys
-from pathlib import Path
-from datetime import datetime
 from loguru import logger
-from typing import Optional
+from src.core.config import Config
+from src.core.odoo_client import OdooClient
+from src.bots.control.control_bot import ControlBot
+from src.bots.reporting.report_bot import ReportBot
+from src.bots.reporting.llm_bot import LLMBot
 
-from .core.config import Config
-from .core.odoo_client import OdooClient
-from .bots.control.control_bot import ControlBot
-
-
-def setup_logging(log_file: Optional[str] = None, log_level: str = "INFO") -> None:
-    """Configure logging."""
-    logger.remove()  # Remove default handler
-    
-    # Console handler
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-        level=log_level,
-    )
-    
-    # File handler
-    if log_file:
-        logger.add(
-            log_file,
-            rotation="10 MB",
-            retention="30 days",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function} - {message}",
-            level=log_level,
-        )
-
+def setup_logging(log_level: str = "INFO"):
+    logger.remove()
+    logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>", level=log_level)
 
 def main():
-    """Main entry point."""
-    # Load configuration
+    # --- SETUP ---
     config = Config.load()
+    setup_logging(config.log_level)
     
-    # Setup logging
-    setup_logging(config.log_file, config.log_level)
-    
-    logger.info("=" * 60)
-    logger.info("Finance Employee AI Agent - Starting")
-    logger.info(f"Mode: {config.mode}")
-    logger.info(f"ERP Type: {config.erp.type}")
-    logger.info("=" * 60)
-    
-    # Initialize ERP client
-    if config.erp.type.lower() == "odoo":
-        erp_client = OdooClient()
-    else:
-        logger.error(f"Unsupported ERP type: {config.erp.type}")
-        sys.exit(1)
-    
-    # Connect to ERP
-    logger.info("Connecting to ERP...")
-    if not erp_client.connect():
-        logger.error("Failed to connect to ERP. Please check your configuration.")
-        sys.exit(1)
-    
-    logger.info("✓ Connected to ERP successfully")
-    
-    # Run ControlBot (MVP)
-    logger.info("\n" + "=" * 60)
-    logger.info("Running ControlBot...")
-    logger.info("=" * 60)
-    
-    control_bot = ControlBot(erp_client)
-    issues = control_bot.run_all_checks()
-    
-    # Generate and display To-Do List
-    todo_list = control_bot.generate_todo_list()
-    print("\n" + todo_list + "\n")
-    
-    # Save to file
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    todo_file = Path("logs") / f"todo_list_{timestamp}.txt"
-    todo_file.parent.mkdir(parents=True, exist_ok=True)
-    todo_file.write_text(todo_list)
-    logger.info(f"To-Do List saved to: {todo_file}")
-    
-    # Disconnect
-    erp_client.disconnect()
-    logger.info("Disconnected from ERP")
-    
-    # Exit with error code if critical issues found
-    error_count = len([i for i in issues if i.severity.value == "error"])
-    if error_count > 0:
-        logger.warning(f"Found {error_count} critical errors. Exiting with code 1.")
-        sys.exit(1)
-    
-    logger.info("Finance Employee AI Agent - Completed successfully")
+    logger.info("🤖 AI Finance Agent - Starting...")
 
+    # ERP Connection
+    client = OdooClient()
+    if not client.connect():
+        logger.error("❌ ERP Connection Failed.")
+        sys.exit(1)
+    
+    logger.success(f"✅ Connected to database: {config.erp.database}")
+
+    # Instantiate Bots
+    control_bot = ControlBot(client)
+    report_bot = ReportBot(client)
+    llm_bot = LLMBot()
+
+    # --- INTERACTIVE LOOP ---
+    print("\n" + "="*60)
+    print("🧠 AI Mode Activated. Ask your questions in natural language.")
+    print("Examples: 'What is the revenue this month?', 'Any risks detected?', 'Summarize the status'.")
+    print("Type 'exit' to quit.")
+    print("="*60 + "\n")
+
+    while True:
+        try:
+            user_input = input("👤 You > ").strip()
+            
+            if user_input.lower() in ['exit', 'quit', 'bye']:
+                print("🤖 Goodbye!")
+                break
+            
+            if not user_input:
+                continue
+
+            # --- DATA RETRIEVAL ---
+            print("   Thinking... (Analyzing Odoo data...)")
+            
+            # A. Get Revenue
+            revenue = report_bot.get_monthly_revenue()
+            
+            # B. Get Anomalies (Audit)
+            # We run checks but don't print the huge list, we pass it to context
+            issues = control_bot.run_all_checks()
+            issues_summary = control_bot.generate_todo_list()
+
+            # C. Build Context for AI (In English)
+            context = f"""
+            - Current Database: {config.erp.database}
+            - Monthly Revenue (Untaxed): {revenue:,.2f} €
+            - Number of Anomalies Detected: {len(issues)}
+            
+            DETAILED AUDIT REPORT:
+            {issues_summary}
+            """
+
+            # --- ASK GEMINI ---
+            answer = llm_bot.ask_finance_advisor(user_input, context)
+            
+            print(f"\n🤖 Agent > {answer}\n")
+
+        except KeyboardInterrupt:
+            print("\n🤖 Forced Exit. Bye!")
+            break
+        except Exception as e:
+            logger.error(f"Unexpected Error: {e}")
+
+    client.disconnect()
 
 if __name__ == "__main__":
     main()
-

@@ -289,3 +289,53 @@ class OdooClient(ERPClient):
 
         return self._execute_kw(model, "search_read", [domain], kwargs)
 
+    def create_activity(self, model, res_id, summary, note, user_id=None):
+        """Creates an activity (To-DO) within Odoo linked to a document.
+        
+        Args:
+            model: Model name (e.g., 'product.product', 'account.move')
+            res_id: ID of the record to link the activity to
+            summary: Activity summary/title
+            note: Activity note/description
+            user_id: User ID to assign the activity to (defaults to current user)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.is_connected():
+            return False
+
+        if user_id is None:
+            user_id = self.uid 
+
+        try:
+            # Get the ir.model ID for the given model name
+            # Odoo requires res_model_id (the ID of ir.model), not res_model (the string)
+            model_records = self._execute_kw(
+                'ir.model',
+                'search_read',
+                [[('model', '=', model)]],
+                {'fields': ['id'], 'limit': 1}
+            )
+            
+            if not model_records:
+                print(f"❌ Error: Model '{model}' not found in Odoo")
+                return False
+            
+            res_model_id = model_records[0]['id']
+
+            activity_data = {
+                'res_model_id': res_model_id,  # Required: ID of ir.model
+                'res_id': res_id,               # ID of the record in that model
+                'activity_type_id': 4,          # To-Do activity type
+                'summary': summary,             
+                'note': note,                   
+                'user_id': user_id,             
+            }
+
+            self._execute_kw('mail.activity', 'create', [activity_data])
+            return True
+        except Exception as e:
+            print(f"❌ Error in creating activity: {e}")
+            return False
+
