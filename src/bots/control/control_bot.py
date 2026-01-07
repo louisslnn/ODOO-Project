@@ -1,7 +1,7 @@
 """ControlBot: The Controller - Detects anomalies, compliance issues, and risk."""
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pydantic import BaseModel
 from loguru import logger
@@ -76,6 +76,7 @@ class ControlBot:
         # VAT & Consistency Checks
         self.check_vat_consistency()
         self.check_invoice_receipt_mismatch()
+        self.check_po_invoice_mismatch()
 
         logger.info(f"ControlBot completed. Found {len(self.issues)} issues.")
         return self.issues
@@ -282,6 +283,111 @@ class ControlBot:
 
         except Exception as e:
             logger.error(f"Error in mismatch check: {e}")
+
+    def check_po_invoice_mismatch(self) -> None:
+        """Check consistency between Purchase Orders and Vendor Bills.
+        
+        Detects if the invoiced amount is greater than the ordered amount,
+        or if there's a significant price deviation.
+        """
+        logger.info("Running check: PO-Invoice mismatch")
+        
+        try:
+            # Calculate date 30 days ago
+            date_30_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            
+            # 1. Get recent vendor invoices (last 30 days)
+            invoices = self.erp_client._execute_kw(
+                'account.move', 'search_read',
+                [[
+                    ('move_type', '=', 'in_invoice'),
+                    ('state', 'in', ['posted', 'draft']),
+                    ('date', '>=', date_30_days_ago)
+                ]],
+                {'fields': ['name', 'invoice_origin', 'amount_total', 'partner_id'], 'limit': 200}
+            )
+            
+            if not invoices:
+                return
+            
+            # 2. Process each invoice
+            for invoice in invoices:
+                invoice_origin = invoice.get('invoice_origin', '').strip()
+                
+                # Skip if no origin or multiple origins (e.g., "P001, P002")
+                if not invoice_origin or ',' in invoice_origin:
+                    if invoice_origin and ',' in invoice_origin:
+                        logger.warning(f"Invoice {invoice['name']} has multiple origins: {invoice_origin}. Skipping.")
+                    continue
+                
+                invoice_amount = float(invoice.get('amount_total', 0) or 0)
+                
+                # Skip if invoice amount is zero
+                if invoice_amount == 0:
+                    continue
+                
+                # 3. Find the Purchase Order by name
+                try:
+                    pos = self.erp_client._execute_kw(
+                        'purchase.order', 'search_read',
+                        [[('name', '=', invoice_origin)]],
+                        {'fields': ['name', 'amount_total', 'state'], 'limit': 1}
+                    )
+                    
+                    if not pos:
+                        # PO not found - log but don't create an issue (could be manual invoice)
+                        logger.debug(f"PO '{invoice_origin}' not found for invoice {invoice['name']}")
+                        continue
+                    
+                    po = pos[0]
+                    po_amount = float(po.get('amount_total', 0) or 0)
+                    
+                    # Skip if PO amount is zero
+                    if po_amount == 0:
+                        continue
+                    
+                    # 4. Compare amounts with tolerance of 1.00
+                    difference = invoice_amount - po_amount
+                    tolerance = 1.00
+                    
+                    # Check if invoice exceeds PO (with tolerance)
+                    if difference > tolerance:
+                        # Calculate percentage deviation
+                        deviation_pct = (difference / po_amount) * 100 if po_amount > 0 else 0
+                        
+                        # Determine severity
+                        if deviation_pct > 5 or difference > po_amount * 0.05:
+                            severity = IssueSeverity.ERROR
+                        else:
+                            severity = IssueSeverity.WARNING
+                        
+                        # Create issue
+                        self._register_issue(ControlIssue(
+                            check_name="po_invoice_mismatch",
+                            severity=severity,
+                            message=(
+                                f"Invoice {invoice['name']} ({invoice_amount:.2f}€) exceeds "
+                                f"PO {po['name']} ({po_amount:.2f}€) by {difference:.2f}€ "
+                                f"({deviation_pct:.1f}% deviation)"
+                            ),
+                            entity_type="account.move",
+                            entity_id=invoice['id'],
+                            entity_name=invoice['name'],
+                            details={
+                                "po_name": po['name'],
+                                "po_amount": po_amount,
+                                "invoice_amount": invoice_amount,
+                                "difference": difference,
+                                "deviation_pct": deviation_pct
+                            }
+                        ))
+                
+                except Exception as e:
+                    logger.warning(f"Error processing invoice {invoice['name']} with origin {invoice_origin}: {e}")
+                    continue
+        
+        except Exception as e:
+            logger.error(f"Error in PO-Invoice mismatch check: {e}")
 
     def generate_todo_list(self) -> str:
         """Generate human-readable report."""
